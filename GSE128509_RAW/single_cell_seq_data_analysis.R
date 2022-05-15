@@ -13,7 +13,7 @@ https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE128509
 
 '''
 
-
+setwd("/Users/huangz36/Documents/Julie_learn_genomics/GSE128509_RAW/")
 
 ###### STEP 0: Restructure input files ######
 # fs=list.files('/Users/huangz36/Documents/Julie_learn_genomics/GSE128509_RAW/','genes.tsv.gz')
@@ -65,13 +65,57 @@ samples = gsub('^GSM[1-9]*_','',samples)
 samples
 names(sceList) = samples
 names(sceList)
-sceList
-sceList[[1]]
+
 sce.all <- merge(sceList[[1]], y=sceList[ -1 ], 
                  add.cell.ids = samples)
-sce.all
+
 as.data.frame(sce.all@assays$RNA@counts[1:10, 1:2])
 head(sce.all@meta.data, 10)
 table(sce.all@meta.data$orig.ident)
 
+
 ###### STEP2: reduce dimensions, cluster ######
+## Since data coming from 4 samples, need to use harmony to treat samples
+sce.all <- NormalizeData(sce.all, 
+                     normalization.method = "LogNormalize",
+                     scale.factor = 1e4)
+sce.all <- FindVariableFeatures(sce.all)
+sce.all <- ScaleData(sce.all)
+## Run PCA
+sce.all <- RunPCA(sce.all, features = VariableFeatures(object = sce.all))
+sce.all2 <- RunTSNE(sce.all, features = VariableFeatures(object = sce.all)) # add-on
+DimPlot(sce.all2, reduction="tsne", label=T)
+
+install.packages('harmony')
+library(harmony)
+
+seuratObj <- RunHarmony(sce.all, "orig.ident")
+names(seuratObj@reductions)
+seuratObj <- RunUMAP(seuratObj, dims = 1:15, 
+                     reduction = "harmony")
+DimPlot(seuratObj, reduction="umap", label=T )
+
+sce=seuratObj
+# compute nearest neighbor graph
+sce <- FindNeighbors(sce, reduction = "harmony", 
+                     dims = 1:15)
+sce.all = sce
+
+# set different resolutions, observe the clustering result, pick the proper one
+for (res in c(0.01, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1)) {
+  sce.all=FindClusters(sce.all, resolution = res, algorithm = 1)
+}
+colnames(sce.all@meta.data)
+apply(sce.all@meta.data[,grep("RNA_snn", colnames(sce.all@meta.data))],2,table)
+
+# Use clustree to visualize
+install.packages("clustree")
+library(clustree)
+
+p2_tree=clustree(sce.all@meta.data,prefix="RNA_snn_res.")
+ggsave(plot=p2_tree, filename="Tree_diff_resolution.pdf")
+# For following analysis, use res as 0.8
+sel.clust = "RNA_snn_res.0.8"
+sce.all <- SetIdent(sce.all, value=sel.clust)
+table(sce.all@active.ident)
+#saveRDS(sce.all, "sce.all_int.rds")
